@@ -14,21 +14,6 @@
     #    7 = DICT_5X5_250
     aruco_dict: 10
 
-    # ── Alignment ──────────────────────────────────────────────────────────────
-    # Theoretical XYZ positions (metres, camera frame) of the 4 ArUco markers
-    # that form the object layout.
-    # Flat list: [x0,y0,z0, x1,y1,z1, x2,y2,z2, x3,y3,z3]
-    # !! REPLACE with values measured from your physical setup !!
-    # Example below: 4 markers at corners of a 5 cm square, 50 cm from camera.
-    theoretical_positions: [-0.025, -0.025, 0.5,
-                             0.025, -0.025, 0.5,
-                             0.025,  0.025, 0.5,
-                            -0.025,  0.025, 0.5]
-
-    # ArUco marker IDs corresponding to theoretical slots 0-3.
-    # ID-based matching is attempted first; proximity matching is the fallback.
-    theoretical_ids: [0, 1, 2, 3]
-
     # ── Performance ────────────────────────────────────────────────────────────
     target_fps: 30.0
 
@@ -38,7 +23,7 @@
     # CPU core assignments (Raspberry Pi 4 has cores 0-3)
     core_capture: 0   # ROS2 spin / image callback
     core_detect:  1   # ArUco detection
-    core_publish: 2   # Alignment + publish
+    core_publish: 2   # Publish
 
     # ── Camera calibration ─────────────────────────────────────────────────────
     # Replace with values from `ros2 run camera_calibration cameracalibrator`
