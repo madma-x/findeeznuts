@@ -7,7 +7,7 @@
  * Pipeline (three dedicated threads pinned to CPU cores):
  *   Thread 0 (core 0) – ROS2 spin / image capture
  *   Thread 1 (core 1) – ArUco detection
- *   Thread 2 (core 2) – Clustering + publish
+ *   Thread 2 (core 2) – Alignment + publish
  *
  * Inter-thread communication uses boost::lockfree::spsc_queue (wait-free,
  * cache-line padded) to avoid mutex contention in hot paths.
@@ -67,6 +67,7 @@ struct alignas(64) Vec3f {
   Vec3f() = default;
   Vec3f(float x, float y, float z) : x(x), y(y), z(z) {}
   Vec3f operator+(const Vec3f& o) const { return {x+o.x, y+o.y, z+o.z}; }
+  Vec3f operator-(const Vec3f& o) const { return {x-o.x, y-o.y, z-o.z}; }
   Vec3f operator*(float s) const { return {x*s, y*s, z*s}; }
 };
 
@@ -178,7 +179,13 @@ public:
     declare_parameter("camera_topic",       "/camera/image_raw");
     declare_parameter("marker_size",        0.05);   // metres
     declare_parameter("aruco_dict",         10);     // DICT_6X6_250
-    declare_parameter("cluster_threshold_y", 0.05);  // metres
+    declare_parameter("theoretical_positions",
+      std::vector<double>{-0.025, -0.025, 0.5,
+                           0.025, -0.025, 0.5,
+                           0.025,  0.025, 0.5,
+                          -0.025,  0.025, 0.5});
+    declare_parameter("theoretical_ids",
+      std::vector<int64_t>{0, 1, 2, 3});
     declare_parameter("target_fps",         30.0);
     declare_parameter("frame_skip_on_lag",  true);
     declare_parameter("camera_matrix",
@@ -191,11 +198,28 @@ public:
 
     camera_topic_     = get_parameter("camera_topic").as_string();
     marker_size_      = static_cast<float>(get_parameter("marker_size").as_double());
-    cluster_thresh_   = static_cast<float>(get_parameter("cluster_threshold_y").as_double());
     frame_skip_       = get_parameter("frame_skip_on_lag").as_bool();
     core_capture_     = get_parameter("core_capture").as_int();
     core_detect_      = get_parameter("core_detect").as_int();
     core_publish_     = get_parameter("core_publish").as_int();
+
+    // ── Theoretical layout ─────────────────────────────────────────────────
+    auto tp = get_parameter("theoretical_positions").as_double_array();
+    auto ti = get_parameter("theoretical_ids").as_integer_array();
+    if (tp.size() >= 12 && ti.size() >= 4) {
+      for (int i = 0; i < 4; ++i) {
+        theoretical_pos_[i] = {
+          static_cast<float>(tp[i*3+0]),
+          static_cast<float>(tp[i*3+1]),
+          static_cast<float>(tp[i*3+2])
+        };
+        theoretical_ids_[i] = static_cast<uint32_t>(ti[i]);
+      }
+      has_theoretical_ = true;
+    } else {
+      RCLCPP_WARN(get_logger(),
+        "theoretical_positions/ids not fully set – alignment will use detected centroid only");
+    }
 
     // ── Camera calibration matrices ────────────────────────────────────────
     auto cm = get_parameter("camera_matrix").as_double_array();
@@ -367,7 +391,7 @@ private:
     }
   }
 
-  // ── Stage 2 – cluster + publish thread (core 2) ────────────────────────────
+  // ── Stage 2 – alignment + publish thread (core 2) ─────────────────────────
 
   void publish_loop()
   {
@@ -390,8 +414,8 @@ private:
         if (ts.active && ts.confidence > 0.1f) active.push_back(&ts);
       }
 
-      // 3. Cluster by Y-position
-      auto clusters = cluster_by_y(active);
+      // 3. Compute alignment point from theoretical layout + detected tags
+      auto align = compute_alignment(active);
 
       // 4. Build and publish message
       auto out_msg = std::make_unique<aruco_picker::msg::DetectedTagArray>();
@@ -399,7 +423,8 @@ private:
       out_msg->header.frame_id = "camera_optical_frame";
       out_msg->tags.reserve(active.size());
 
-      for (const auto* ts : active) {
+      for (size_t ti = 0; ti < active.size(); ++ti) {
+        const auto* ts = active[ti];
         aruco_picker::msg::DetectedTag tag_msg;
         tag_msg.tag_id = ts->id;
 
@@ -412,22 +437,14 @@ private:
         tag_msg.tag_pose.orientation.z = static_cast<double>(ts->rot.z);
         tag_msg.confidence             = ts->confidence;
 
-        // Find cluster membership
-        tag_msg.cluster_id = -1;
-        for (int ci = 0; ci < static_cast<int>(clusters.size()); ++ci) {
-          for (const auto* member : clusters[ci]) {
-            if (member->id == ts->id) {
-              tag_msg.cluster_id = ci;
-              // Centroid of cluster
-              Vec3f centroid = compute_centroid(clusters[ci]);
-              tag_msg.cluster_pose.position.x = static_cast<double>(centroid.x);
-              tag_msg.cluster_pose.position.y = static_cast<double>(centroid.y);
-              tag_msg.cluster_pose.position.z = static_cast<double>(centroid.z);
-              tag_msg.cluster_pose.orientation.w = 1.0;
-              break;
-            }
-          }
-        }
+        // Theoretical slot this tag was matched to (-1 = unmatched)
+        tag_msg.slot_id = align.tag_to_slot[ti];
+
+        // Shared alignment point for the whole object group
+        tag_msg.alignment_pose.position.x    = static_cast<double>(align.point.x);
+        tag_msg.alignment_pose.position.y    = static_cast<double>(align.point.y);
+        tag_msg.alignment_pose.position.z    = static_cast<double>(align.point.z);
+        tag_msg.alignment_pose.orientation.w = 1.0;
 
         out_msg->tags.push_back(std::move(tag_msg));
       }
@@ -497,43 +514,89 @@ private:
     return nullptr; // pool exhausted
   }
 
-  // ── Y-axis clustering ─────────────────────────────────────────────────────
+  // ── Theoretical-layout alignment ─────────────────────────────────────────
 
-  using Cluster = std::vector<const TagState*>;
+  /// Result returned by compute_alignment()
+  struct AlignmentResult {
+    Vec3f            point{};          // alignment point in camera frame
+    int              matched_count{0}; // number of detected tags matched to a slot
+    std::vector<int> tag_to_slot;      // per active-tag slot index (0-3, or -1)
+  };
 
-  std::vector<Cluster> cluster_by_y(const std::vector<const TagState*>& tags)
+  /// Compute the alignment point the robot should move toward.
+  ///
+  /// Algorithm:
+  ///   1. Match each detected tag to one of the 4 theoretical slots:
+  ///      - first by marker ID (O(4) scan per tag)
+  ///      - then by 3-D proximity for any remaining unmatched tags
+  ///   2. For every matched slot compute: offset = detected_pos − theoretical_pos
+  ///   3. alignment_point = theoretical_centre + mean(offsets)
+  ///
+  /// When fewer than 4 tags are visible the undetected slots contribute no
+  /// offset, so the alignment point stays close to the theoretical centre and
+  /// only drifts by the average error of what is actually seen.
+  AlignmentResult compute_alignment(const std::vector<const TagState*>& active)
   {
-    std::vector<Cluster> clusters;
-    if (tags.empty()) return clusters;
+    AlignmentResult ar;
+    ar.tag_to_slot.assign(active.size(), -1);
 
-    // Sort by Y position for efficient grouping
-    std::vector<const TagState*> sorted = tags;
-    std::sort(sorted.begin(), sorted.end(),
-      [](const TagState* a, const TagState* b) { return a->pos.y < b->pos.y; });
+    // Theoretical centre (fixed, independent of detections)
+    Vec3f centre;
+    for (const auto& p : theoretical_pos_) centre = centre + p;
+    centre = centre * 0.25f;
 
-    Cluster current;
-    current.push_back(sorted[0]);
+    if (!has_theoretical_ || active.empty()) {
+      ar.point = centre;
+      return ar;
+    }
 
-    for (size_t i = 1; i < sorted.size(); ++i) {
-      if (std::abs(sorted[i]->pos.y - sorted[i-1]->pos.y) <= cluster_thresh_) {
-        current.push_back(sorted[i]);
-      } else {
-        if (current.size() >= 2) clusters.push_back(std::move(current));
-        current.clear();
-        current.push_back(sorted[i]);
+    // One detected tag per slot at most
+    std::array<int, 4> slot_to_tag{-1, -1, -1, -1};  // slot → active[] index
+    std::vector<bool>  tag_used(active.size(), false);
+
+    // Pass 1: ID-based matching
+    for (size_t ti = 0; ti < active.size(); ++ti) {
+      for (int si = 0; si < 4; ++si) {
+        if (slot_to_tag[si] < 0 && active[ti]->id == theoretical_ids_[si]) {
+          slot_to_tag[si]   = static_cast<int>(ti);
+          ar.tag_to_slot[ti] = si;
+          tag_used[ti]       = true;
+          break;
+        }
       }
     }
-    if (current.size() >= 2) clusters.push_back(std::move(current));
 
-    return clusters;
-  }
+    // Pass 2: proximity matching for tags not assigned by ID
+    for (size_t ti = 0; ti < active.size(); ++ti) {
+      if (tag_used[ti]) continue;
+      float best_dist = std::numeric_limits<float>::max();
+      int   best_slot = -1;
+      for (int si = 0; si < 4; ++si) {
+        if (slot_to_tag[si] >= 0) continue;  // slot already taken
+        const Vec3f d = active[ti]->pos - theoretical_pos_[si];
+        const float dist = d.x*d.x + d.y*d.y + d.z*d.z;
+        if (dist < best_dist) { best_dist = dist; best_slot = si; }
+      }
+      if (best_slot >= 0) {
+        slot_to_tag[best_slot]  = static_cast<int>(ti);
+        ar.tag_to_slot[ti]      = best_slot;
+        tag_used[ti]            = true;
+      }
+    }
 
-  static Vec3f compute_centroid(const Cluster& cluster)
-  {
-    Vec3f sum;
-    for (const auto* ts : cluster) sum = sum + ts->pos;
-    const float inv = 1.0f / static_cast<float>(cluster.size());
-    return sum * inv;
+    // Average offset from all matched slots
+    Vec3f avg_offset;
+    for (int si = 0; si < 4; ++si) {
+      if (slot_to_tag[si] < 0) continue;
+      avg_offset = avg_offset + (active[slot_to_tag[si]]->pos - theoretical_pos_[si]);
+      ++ar.matched_count;
+    }
+    if (ar.matched_count > 0) {
+      avg_offset = avg_offset * (1.0f / static_cast<float>(ar.matched_count));
+    }
+
+    ar.point = centre + avg_offset;
+    return ar;
   }
 
   // ── Object-point template for solvePnP ───────────────────────────────────
@@ -569,11 +632,15 @@ private:
   // Parameters
   std::string camera_topic_;
   float       marker_size_;
-  float       cluster_thresh_;
   bool        frame_skip_;
   int         core_capture_;
   int         core_detect_;
   int         core_publish_;
+
+  // Theoretical object layout (4 marker positions + their IDs)
+  std::array<Vec3f, 4>    theoretical_pos_{};
+  std::array<uint32_t, 4> theoretical_ids_{};
+  bool                    has_theoretical_{false};
 
   // Camera intrinsics
   cv::Mat camera_matrix_;
