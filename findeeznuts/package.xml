@@ -1,14 +1,42 @@
-<package format="2">
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
   <name>aruco_picker</name>
   <version>0.0.1</version>
-  <description>The ArUco Picker Package</description>
+  <description>
+    CPU-optimized ROS2 C++ ArUco detection and clustering package for Raspberry Pi 4.
+    Features: three-thread pipeline, ARM NEON SIMD, lock-free queues, zero-copy image
+    handling, pose smoothing, and Y-axis clustering for CDR2026 competition.
+  </description>
   <maintainer email="your_email@example.com">Your Name</maintainer>
   <license>BSD</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Message generation -->
+  <build_depend>rosidl_default_generators</build_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <!-- Core ROS2 -->
   <build_depend>rclcpp</build_depend>
-  <build_depend>std_msgs</build_depend>
   <exec_depend>rclcpp</exec_depend>
+
+  <!-- Messages -->
+  <build_depend>std_msgs</build_depend>
   <exec_depend>std_msgs</exec_depend>
+  <build_depend>sensor_msgs</build_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <build_depend>geometry_msgs</build_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+
+  <!-- Image handling -->
+  <build_depend>cv_bridge</build_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <build_depend>image_transport</build_depend>
+  <exec_depend>image_transport</exec_depend>
+
+  <!-- OpenCV with ArUco support (opencv-contrib) -->
+  <build_depend>libopencv-dev</build_depend>
 
 </package>
