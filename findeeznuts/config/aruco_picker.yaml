@@ -1,0 +1,41 @@
+/**:
+  ros__parameters:
+    # ── Camera ─────────────────────────────────────────────────────────────────
+    # Topic published by your rpicam/image_transport bridge
+    camera_topic: "/camera/image_raw"
+
+    # ── ArUco ──────────────────────────────────────────────────────────────────
+    # Marker physical size in metres (measure the printed square)
+    marker_size: 0.05
+
+    # cv::aruco predefined dictionary ID
+    #   10 = DICT_6X6_250  (recommended – fewer false positives, fast)
+    #    1 = DICT_4X4_50
+    #    7 = DICT_5X5_250
+    aruco_dict: 10
+
+    # ── Clustering ─────────────────────────────────────────────────────────────
+    # Maximum Y-axis separation (metres) to consider two tags part of the same
+    # object cluster.  5 cm is suitable for the CDR2026 nut layout.
+    cluster_threshold_y: 0.05
+
+    # ── Performance ────────────────────────────────────────────────────────────
+    target_fps: 30.0
+
+    # Drop incoming frames when the detection queue is full (prevents build-up)
+    frame_skip_on_lag: true
+
+    # CPU core assignments (Raspberry Pi 4 has cores 0-3)
+    core_capture: 0   # ROS2 spin / image callback
+    core_detect:  1   # ArUco detection
+    core_publish: 2   # Clustering + publish
+
+    # ── Camera calibration ─────────────────────────────────────────────────────
+    # Replace with values from `ros2 run camera_calibration cameracalibrator`
+    # Format: [fx, 0, cx,  0, fy, cy,  0, 0, 1]
+    camera_matrix: [600.0, 0.0, 320.0,
+                    0.0, 600.0, 240.0,
+                    0.0,   0.0,   1.0]
+
+    # Distortion coefficients [k1, k2, p1, p2, k3]
+    dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
