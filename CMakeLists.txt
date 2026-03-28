@@ -66,6 +66,10 @@ add_executable(aruco_picker_node
   src/aruco_picker_node.cpp
 )
 
+add_executable(camera_capture_node
+  src/camera_capture_node.cpp
+)
+
 # Generated message headers become available after rosidl runs
 rosidl_get_typesupport_target(cpp_typesupport_target
   ${PROJECT_NAME} "rosidl_typesupport_cpp"
@@ -77,6 +81,10 @@ target_link_libraries(aruco_picker_node
   pthread
 )
 
+target_link_libraries(camera_capture_node
+  ${OpenCV_LIBS}
+)
+
 ament_target_dependencies(aruco_picker_node
   rclcpp
   std_msgs
@@ -86,13 +94,25 @@ ament_target_dependencies(aruco_picker_node
   image_transport
 )
 
+ament_target_dependencies(camera_capture_node
+  rclcpp
+  sensor_msgs
+  cv_bridge
+)
+
 target_include_directories(aruco_picker_node PRIVATE
   ${OpenCV_INCLUDE_DIRS}
   ${Boost_INCLUDE_DIRS}
 )
 
+target_include_directories(camera_capture_node PRIVATE
+  ${OpenCV_INCLUDE_DIRS}
+)
+
 # ── Install ───────────────────────────────────────────────────────────────────
-install(TARGETS aruco_picker_node
+install(TARGETS
+  aruco_picker_node
+  camera_capture_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -1,0 +1,10 @@
+# ROS2/colcon build artifacts
+build/
+install/
+log/
+
+# Common temporary/editor files
+*.swp
+*.swo
+*~
+.DS_Store

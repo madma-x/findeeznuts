@@ -1,0 +1,20 @@
+[Unit]
+Description=ArUco Picker ROS2 Launch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ovoleur
+WorkingDirectory=/home/ovoleur/findeeznuts
+ExecStartPre=/bin/sleep 5
+ExecStart=/home/ovoleur/findeeznuts/scripts/start_aruco.sh
+Restart=always
+RestartSec=3
+
+# Keep logs in journalctl
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

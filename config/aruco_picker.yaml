@@ -9,10 +9,11 @@
     marker_size: 0.05
 
     # cv::aruco predefined dictionary ID
-    #   10 = DICT_6X6_250  (recommended – fewer false positives, fast)
-    #    1 = DICT_4X4_50
+    #    0 = DICT_4X4_50
+    #    2 = DICT_4X4_250
     #    7 = DICT_5X5_250
-    aruco_dict: 10
+    #   10 = DICT_6X6_250
+    aruco_dict: 0
 
     # ── Clustering ─────────────────────────────────────────────────────────────
     # Maximum Y-axis separation (metres) to consider two tags part of the same

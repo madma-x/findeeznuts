@@ -42,7 +42,7 @@
 #include <opencv2/objdetect/aruco_detector.hpp>
 
 // ROS2
-#include <cv_bridge/cv_bridge.h>
+#include <cv_bridge/cv_bridge.hpp>
 #include <image_transport/image_transport.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -59,6 +59,10 @@ static constexpr float kSmoothAlpha   = 0.7f; // EMA: higher = faster response
 static constexpr float kLostDecay     = 0.85f; // confidence decay when tag lost
 static constexpr float kConfirmAlpha  = 0.15f; // confidence rise per detection
 static constexpr int kLostFrameLimit  = 10;   // frames without detection → drop
+
+// Only these tag IDs are considered valid targets.
+static constexpr uint32_t kTargetTagA = 36;
+static constexpr uint32_t kTargetTagB = 47;
 
 // ── Cache-line aligned data structures ───────────────────────────────────────
 
@@ -164,6 +168,12 @@ static Quatf quat_slerp(const Quatf& a, const Quatf& b, float t)
   };
 }
 
+static inline bool is_target_tag(const int id)
+{
+  return id == static_cast<int>(kTargetTagA) ||
+         id == static_cast<int>(kTargetTagB);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  ArucoPicker node
 // ═════════════════════════════════════════════════════════════════════════════
@@ -177,7 +187,7 @@ public:
     // ── Declare + read parameters ──────────────────────────────────────────
     declare_parameter("camera_topic",       "/camera/image_raw");
     declare_parameter("marker_size",        0.05);   // metres
-    declare_parameter("aruco_dict",         10);     // DICT_6X6_250
+    declare_parameter("aruco_dict",         0);      // DICT_4X4_50
     declare_parameter("cluster_threshold_y", 0.05);  // metres
     declare_parameter("target_fps",         30.0);
     declare_parameter("frame_skip_on_lag",  true);
@@ -339,6 +349,10 @@ private:
 
         // Pose estimation for all detected markers
         for (size_t i = 0; i < ids.size() && result.count < kMaxTags; ++i) {
+          if (!is_target_tag(ids[i])) {
+            continue;
+          }
+
           cv::solvePnP(
             build_object_points(marker_size_),
             corners[i],
