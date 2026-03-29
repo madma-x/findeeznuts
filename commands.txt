@@ -9,3 +9,11 @@ cd /home/ovoleur/findeeznuts
 source /home/ovoleur/ros2_jazzy/install/setup.bash
 colcon build --symlink-install --executor sequential --parallel-workers 1
 sudo systemctl restart aruco-picker.service
+
+ROS_VERSION=2
+ROS_STATIC_PEERS=192.168.10.2
+ROS_PYTHON_VERSION=3
+ROS_DOMAIN_ID=0
+ROS_AUTOMATIC_DISCOVERY_RANGE=OFF
+CYCLONEDDS_URI=<CycloneDDS><Domain id='any'><General><Interfaces><NetworkInterface name='enp1s0' multicast='false'/></Interfaces></General><Discovery><Peers><Peer address='192.168.10.2'/></Peers><ParticipantIndex>auto</ParticipantIndex></Discovery></Domain></CycloneDDS>
+ROS_DISTRO=jazzy
