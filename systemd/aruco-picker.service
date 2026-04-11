@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=ovoleur
-WorkingDirectory=/home/ovoleur/findeeznuts
+WorkingDirectory=/home/ovoleur/holonomic_robot/findeeznuts
 ExecStartPre=/bin/sleep 5
-ExecStart=/home/ovoleur/findeeznuts/scripts/start_aruco.sh
+ExecStart=/home/ovoleur/holonomic_robot/findeeznuts/scripts/start_aruco.sh
 Restart=always
 RestartSec=3
 

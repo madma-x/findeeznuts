@@ -4,19 +4,16 @@
   <name>aruco_picker</name>
   <version>0.0.1</version>
   <description>
-    CPU-optimized ROS2 C++ ArUco detection and clustering package for Raspberry Pi 4.
+    CPU-optimized ROS2 C++ ArUco detection and pose tracking package for Raspberry Pi 4.
     Features: three-thread pipeline, ARM NEON SIMD, lock-free queues, zero-copy image
-    handling, pose smoothing, and Y-axis clustering for CDR2026 competition.
+    handling, and pose smoothing for CDR2026 competition.
   </description>
   <maintainer email="your_email@example.com">Your Name</maintainer>
   <license>BSD</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- Message generation -->
-  <build_depend>rosidl_default_generators</build_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
+  <depend>aruco_interfaces</depend>
 
   <!-- Core ROS2 -->
   <build_depend>rclcpp</build_depend>

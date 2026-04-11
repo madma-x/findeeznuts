@@ -42,7 +42,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
-find_package(rosidl_default_generators REQUIRED)
+find_package(aruco_interfaces REQUIRED)
 
 # ── OpenCV (must include opencv_aruco / contrib) ───────────────────────────────
 find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d objdetect)
@@ -54,13 +54,6 @@ message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 # ── Boost (lock-free queues) ───────────────────────────────────────────────────
 find_package(Boost REQUIRED)
 
-# ── Custom message types ───────────────────────────────────────────────────────
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/DetectedTag.msg"
-  "msg/DetectedTagArray.msg"
-  DEPENDENCIES std_msgs geometry_msgs
-)
-
 # ── Main node ─────────────────────────────────────────────────────────────────
 add_executable(aruco_picker_node
   src/aruco_picker_node.cpp
@@ -70,13 +63,7 @@ add_executable(camera_capture_node
   src/camera_capture_node.cpp
 )
 
-# Generated message headers become available after rosidl runs
-rosidl_get_typesupport_target(cpp_typesupport_target
-  ${PROJECT_NAME} "rosidl_typesupport_cpp"
-)
-
 target_link_libraries(aruco_picker_node
-  ${cpp_typesupport_target}
   ${OpenCV_LIBS}
   pthread
 )
@@ -90,6 +77,7 @@ ament_target_dependencies(aruco_picker_node
   std_msgs
   sensor_msgs
   geometry_msgs
+  aruco_interfaces
   cv_bridge
   image_transport
 )
@@ -122,6 +110,4 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
-# ── Ament export ──────────────────────────────────────────────────────────────
-ament_export_dependencies(rosidl_default_runtime)
 ament_package()

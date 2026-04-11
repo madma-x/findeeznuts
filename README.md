@@ -1,7 +1,7 @@
 # aruco_picker
 
-CPU-optimised ROS2 C++ package for real-time ArUco marker detection, pose
-tracking, and Y-axis clustering on **Raspberry Pi 4** (Debian Trixie /
+CPU-optimised ROS2 C++ package for real-time ArUco marker detection and pose
+tracking on **Raspberry Pi 4** (Debian Trixie /
 AArch64).  Written for the **CDR2026** competition.
 
 ---
@@ -13,7 +13,6 @@ AArch64).  Written for the **CDR2026** competition.
 | Detection | OpenCV `ArucoDetector` – `DICT_6X6_250` by default |
 | Pose estimation | `solvePnP` with `IPPE_SQUARE` solver |
 | Tracking | Exponential Moving Average (α = 0.7) + confidence scoring |
-| Clustering | Y-axis proximity (configurable threshold, default 5 cm) |
 | Threading | 3-stage pipeline pinned to CPU cores 0/1/2 |
 | Queues | `boost::lockfree::spsc_queue` (wait-free, no mutex) |
 | SIMD | ARM NEON via `-march=armv8-a+crc+simd` + OpenCV NEON paths |
@@ -35,8 +34,6 @@ aruco_picker/DetectedTagArray
   aruco_picker/DetectedTag[] tags
     uint32 tag_id
     geometry_msgs/Pose tag_pose       # smoothed individual pose
-    int32  cluster_id                 # -1 = not clustered
-    geometry_msgs/Pose cluster_pose   # centroid of cluster (if clustered)
     float32 confidence                # [0.0 – 1.0]
 ```
 
@@ -135,7 +132,7 @@ Change via YAML:
 ```yaml
 core_capture: 0
 core_detect:  1
-core_publish: 2
+  core_publish: 2
 ```
 
 Leave core 3 free for the OS and other ROS2 nodes.

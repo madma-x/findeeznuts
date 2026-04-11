@@ -1,13 +1,13 @@
 /**
  * aruco_picker_node.cpp
  *
- * CPU-optimised ROS2 node for ArUco detection, pose tracking and Y-axis
- * clustering on Raspberry Pi 4 (AArch64 / ARM NEON).
+ * CPU-optimised ROS2 node for ArUco detection and pose tracking on
+ * Raspberry Pi 4 (AArch64 / ARM NEON).
  *
  * Pipeline (three dedicated threads pinned to CPU cores):
  *   Thread 0 (core 0) – ROS2 spin / image capture
  *   Thread 1 (core 1) – ArUco detection
- *   Thread 2 (core 2) – Clustering + publish
+ *   Thread 2 (core 2) – Publish tracked detections
  *
  * Inter-thread communication uses boost::lockfree::spsc_queue (wait-free,
  * cache-line padded) to avoid mutex contention in hot paths.
@@ -48,8 +48,8 @@
 #include <sensor_msgs/msg/image.hpp>
 
 // Generated messages
-#include "aruco_picker/msg/detected_tag.hpp"
-#include "aruco_picker/msg/detected_tag_array.hpp"
+#include "aruco_interfaces/msg/detected_tag.hpp"
+#include "aruco_interfaces/msg/detected_tag_array.hpp"
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +74,14 @@ struct alignas(64) Vec3f {
   Vec3f operator*(float s) const { return {x*s, y*s, z*s}; }
 };
 
+static inline float squared_distance(const Vec3f& a, const Vec3f& b)
+{
+  const float dx = a.x - b.x;
+  const float dy = a.y - b.y;
+  const float dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
 struct alignas(64) Quatf {
   float w{1}, x{0}, y{0}, z{0};
 };
@@ -94,7 +102,7 @@ struct FrameToken {
   uint64_t seq{0};
 };
 
-/// Detection result – passed from detection thread to cluster thread
+/// Detection result – passed from detection thread to publish thread
 struct alignas(64) DetectionResult {
   struct RawTag {
     uint32_t id;
@@ -188,7 +196,6 @@ public:
     declare_parameter("camera_topic",       "/camera/image_raw");
     declare_parameter("marker_size",        0.05);   // metres
     declare_parameter("aruco_dict",         0);      // DICT_4X4_50
-    declare_parameter("cluster_threshold_y", 0.05);  // metres
     declare_parameter("target_fps",         30.0);
     declare_parameter("frame_skip_on_lag",  true);
     declare_parameter("camera_matrix",
@@ -201,7 +208,6 @@ public:
 
     camera_topic_     = get_parameter("camera_topic").as_string();
     marker_size_      = static_cast<float>(get_parameter("marker_size").as_double());
-    cluster_thresh_   = static_cast<float>(get_parameter("cluster_threshold_y").as_double());
     frame_skip_       = get_parameter("frame_skip_on_lag").as_bool();
     core_capture_     = get_parameter("core_capture").as_int();
     core_detect_      = get_parameter("core_detect").as_int();
@@ -234,7 +240,7 @@ public:
     // Keep-last(1) best-effort – only the latest detection matters
     rclcpp::QoS pub_qos(rclcpp::KeepLast(1));
     pub_qos.best_effort().durability_volatile();
-    publisher_ = create_publisher<aruco_picker::msg::DetectedTagArray>(
+    publisher_ = create_publisher<aruco_interfaces::msg::DetectedTagArray>(
       "~/detected_tags", pub_qos);
 
     // ── Stats timer (1 Hz) ─────────────────────────────────────────────────
@@ -381,7 +387,7 @@ private:
     }
   }
 
-  // ── Stage 2 – cluster + publish thread (core 2) ────────────────────────────
+  // ── Stage 2 – publish thread (core 2) ─────────────────────────────────────
 
   void publish_loop()
   {
@@ -404,17 +410,14 @@ private:
         if (ts.active && ts.confidence > 0.1f) active.push_back(&ts);
       }
 
-      // 3. Cluster by Y-position
-      auto clusters = cluster_by_y(active);
-
-      // 4. Build and publish message
-      auto out_msg = std::make_unique<aruco_picker::msg::DetectedTagArray>();
+      // 3. Build and publish message
+      auto out_msg = std::make_unique<aruco_interfaces::msg::DetectedTagArray>();
       out_msg->header.stamp    = result.stamp;
       out_msg->header.frame_id = "camera_optical_frame";
       out_msg->tags.reserve(active.size());
 
       for (const auto* ts : active) {
-        aruco_picker::msg::DetectedTag tag_msg;
+        aruco_interfaces::msg::DetectedTag tag_msg;
         tag_msg.tag_id = ts->id;
 
         tag_msg.tag_pose.position.x    = static_cast<double>(ts->pos.x);
@@ -425,23 +428,6 @@ private:
         tag_msg.tag_pose.orientation.y = static_cast<double>(ts->rot.y);
         tag_msg.tag_pose.orientation.z = static_cast<double>(ts->rot.z);
         tag_msg.confidence             = ts->confidence;
-
-        // Find cluster membership
-        tag_msg.cluster_id = -1;
-        for (int ci = 0; ci < static_cast<int>(clusters.size()); ++ci) {
-          for (const auto* member : clusters[ci]) {
-            if (member->id == ts->id) {
-              tag_msg.cluster_id = ci;
-              // Centroid of cluster
-              Vec3f centroid = compute_centroid(clusters[ci]);
-              tag_msg.cluster_pose.position.x = static_cast<double>(centroid.x);
-              tag_msg.cluster_pose.position.y = static_cast<double>(centroid.y);
-              tag_msg.cluster_pose.position.z = static_cast<double>(centroid.z);
-              tag_msg.cluster_pose.orientation.w = 1.0;
-              break;
-            }
-          }
-        }
 
         out_msg->tags.push_back(std::move(tag_msg));
       }
@@ -455,6 +441,8 @@ private:
 
   void update_tracker(const DetectionResult& result)
   {
+    std::array<bool, kMaxTags> matched{};
+
     // Mark all active states as "not seen this frame"
     for (auto& ts : tracker_) {
       if (ts.active) ++ts.lost_frames;
@@ -462,7 +450,7 @@ private:
 
     for (int i = 0; i < result.count; ++i) {
       const auto& raw = result.tags[i];
-      TagState* ts = find_or_create(raw.id);
+      TagState* ts = find_or_create(raw.id, raw.tvec, matched);
       if (!ts) continue;
 
       ts->lost_frames = 0;
@@ -494,60 +482,46 @@ private:
     }
   }
 
-  TagState* find_or_create(uint32_t id)
+  TagState* find_or_create(
+    uint32_t id,
+    const Vec3f& position,
+    std::array<bool, kMaxTags>& matched)
   {
-    // O(N) scan – N ≤ kMaxTags, stays in L1 cache due to alignment
-    for (auto& ts : tracker_) {
-      if (ts.active && ts.id == id) return &ts;
+    int best_index = -1;
+    float best_distance = std::numeric_limits<float>::max();
+
+    // Match each detection to at most one existing tracker entry, even when
+    // multiple visible markers share the same ArUco ID.
+    for (size_t i = 0; i < tracker_.size(); ++i) {
+      auto& ts = tracker_[i];
+      if (!ts.active || matched[i] || ts.id != id) {
+        continue;
+      }
+
+      const float distance = squared_distance(ts.pos, position);
+      if (distance < best_distance) {
+        best_distance = distance;
+        best_index = static_cast<int>(i);
+      }
     }
+
+    if (best_index >= 0) {
+      matched[best_index] = true;
+      return &tracker_[best_index];
+    }
+
     // Reuse first inactive slot
-    for (auto& ts : tracker_) {
+    for (size_t i = 0; i < tracker_.size(); ++i) {
+      auto& ts = tracker_[i];
       if (!ts.active) {
-        ts      = TagState{};
-        ts.id   = id;
+        ts = TagState{};
+        ts.id = id;
+        matched[i] = true;
         return &ts;
       }
     }
+
     return nullptr; // pool exhausted
-  }
-
-  // ── Y-axis clustering ─────────────────────────────────────────────────────
-
-  using Cluster = std::vector<const TagState*>;
-
-  std::vector<Cluster> cluster_by_y(const std::vector<const TagState*>& tags)
-  {
-    std::vector<Cluster> clusters;
-    if (tags.empty()) return clusters;
-
-    // Sort by Y position for efficient grouping
-    std::vector<const TagState*> sorted = tags;
-    std::sort(sorted.begin(), sorted.end(),
-      [](const TagState* a, const TagState* b) { return a->pos.y < b->pos.y; });
-
-    Cluster current;
-    current.push_back(sorted[0]);
-
-    for (size_t i = 1; i < sorted.size(); ++i) {
-      if (std::abs(sorted[i]->pos.y - sorted[i-1]->pos.y) <= cluster_thresh_) {
-        current.push_back(sorted[i]);
-      } else {
-        if (current.size() >= 2) clusters.push_back(std::move(current));
-        current.clear();
-        current.push_back(sorted[i]);
-      }
-    }
-    if (current.size() >= 2) clusters.push_back(std::move(current));
-
-    return clusters;
-  }
-
-  static Vec3f compute_centroid(const Cluster& cluster)
-  {
-    Vec3f sum;
-    for (const auto* ts : cluster) sum = sum + ts->pos;
-    const float inv = 1.0f / static_cast<float>(cluster.size());
-    return sum * inv;
   }
 
   // ── Object-point template for solvePnP ───────────────────────────────────
@@ -583,7 +557,6 @@ private:
   // Parameters
   std::string camera_topic_;
   float       marker_size_;
-  float       cluster_thresh_;
   bool        frame_skip_;
   int         core_capture_;
   int         core_detect_;
@@ -597,7 +570,7 @@ private:
   std::unique_ptr<cv::aruco::ArucoDetector> detector_;
 
   // Publisher
-  rclcpp::Publisher<aruco_picker::msg::DetectedTagArray>::SharedPtr publisher_;
+  rclcpp::Publisher<aruco_interfaces::msg::DetectedTagArray>::SharedPtr publisher_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr          image_sub_;
   rclcpp::TimerBase::SharedPtr                                       stats_timer_;
 
