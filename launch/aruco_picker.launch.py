@@ -7,8 +7,8 @@ Launches the aruco_picker_node with:
   - CPU affinity pre-set via taskset (cores 0-2)
 
 Usage:
-  ros2 launch aruco_picker aruco_picker.launch.py
-  ros2 launch aruco_picker aruco_picker.launch.py camera_topic:=/my_cam/image_raw
+    ros2 launch findeeznuts aruco_picker.launch.py
+    ros2 launch findeeznuts aruco_picker.launch.py camera_topic:=/my_cam/image_raw
 """
 
 import os
@@ -21,7 +21,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory("aruco_picker")
+    pkg_share = get_package_share_directory("findeeznuts")
     config_file = os.path.join(pkg_share, "config", "aruco_picker.yaml")
 
     # ── Launch arguments ───────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ def generate_launch_description():
 
     # ── Main node ──────────────────────────────────────────────────────────────
     aruco_node = Node(
-        package="aruco_picker",
+        package="findeeznuts",
         executable="aruco_picker_node",
         name="aruco_picker",
         output="screen",

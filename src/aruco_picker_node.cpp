@@ -190,11 +190,11 @@ class ArucoPickerNode : public rclcpp::Node
 {
 public:
   explicit ArucoPickerNode(const rclcpp::NodeOptions& opts = rclcpp::NodeOptions())
-  : rclcpp::Node("aruco_picker", opts)
+  : rclcpp::Node("findeeznuts", opts)
   {
     // ── Declare + read parameters ──────────────────────────────────────────
     declare_parameter("camera_topic",       "/camera/image_raw");
-    declare_parameter("marker_size",        0.05);   // metres
+    declare_parameter("marker_size",        0.029);   // metres
     declare_parameter("aruco_dict",         0);      // DICT_4X4_50
     declare_parameter("target_fps",         30.0);
     declare_parameter("frame_skip_on_lag",  true);

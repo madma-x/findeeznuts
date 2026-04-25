@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(aruco_picker)
+project(findeeznuts)
 
 # ── Compiler standard ──────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 17)
@@ -108,6 +108,11 @@ install(DIRECTORY
   config
   launch
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  scripts/aruco_pose_debug_node.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_package()

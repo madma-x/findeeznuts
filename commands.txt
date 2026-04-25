@@ -1,6 +1,6 @@
 source /home/ovoleur/ros2_jazzy/install/setup.bash
 source /home/ovoleur/findeeznuts/install/setup.bash
-export AMENT_PREFIX_PATH=/home/ovoleur/findeeznuts/install/aruco_picker:$AMENT_PREFIX_PATH
+export AMENT_PREFIX_PATH=/home/ovoleur/findeeznuts/install/findeeznuts:$AMENT_PREFIX_PATH
 python3 /home/ovoleur/findeeznuts/view_camera.py
 
 

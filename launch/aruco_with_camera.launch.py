@@ -8,7 +8,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    pkg_share = get_package_share_directory("aruco_picker")
+    pkg_share = get_package_share_directory("findeeznuts")
     config_file = os.path.join(pkg_share, "config", "aruco_picker.yaml")
 
     camera_topic_arg = DeclareLaunchArgument(
@@ -59,7 +59,7 @@ def generate_launch_description():
     )
 
     camera_node = Node(
-        package="aruco_picker",
+        package="findeeznuts",
         executable="camera_capture_node",
         name="camera_capture",
         output="screen",
@@ -77,9 +77,9 @@ def generate_launch_description():
     )
 
     aruco_node = Node(
-        package="aruco_picker",
+        package="findeeznuts",
         executable="aruco_picker_node",
-        name="aruco_picker",
+        name="findeeznuts",
         output="screen",
         parameters=[
             config_file,
