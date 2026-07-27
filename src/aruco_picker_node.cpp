@@ -208,10 +208,17 @@ public:
 
     camera_topic_     = get_parameter("camera_topic").as_string();
     marker_size_      = static_cast<float>(get_parameter("marker_size").as_double());
+    target_fps_       = static_cast<float>(get_parameter("target_fps").as_double());
     frame_skip_       = get_parameter("frame_skip_on_lag").as_bool();
     core_capture_     = get_parameter("core_capture").as_int();
     core_detect_      = get_parameter("core_detect").as_int();
     core_publish_     = get_parameter("core_publish").as_int();
+
+    if (target_fps_ > 0.0f) {
+      min_enqueue_interval_ns_ = static_cast<uint64_t>(1e9f / target_fps_);
+    }
+
+    object_points_ = build_object_points(marker_size_);
 
     // ── Camera calibration matrices ────────────────────────────────────────
     auto cm = get_parameter("camera_matrix").as_double_array();
@@ -286,6 +293,21 @@ private:
 
     frame_count_in_.fetch_add(1, std::memory_order_relaxed);
 
+    if (min_enqueue_interval_ns_ > 0) {
+      const int64_t stamp_ns = rclcpp::Time(msg->header.stamp).nanoseconds();
+      const uint64_t now_ns =
+        stamp_ns > 0 ? static_cast<uint64_t>(stamp_ns)
+                     : static_cast<uint64_t>(this->now().nanoseconds());
+      const uint64_t last_ns = last_enqueued_ns_.load(std::memory_order_relaxed);
+      if (last_ns > 0 && now_ns > last_ns && (now_ns - last_ns) < min_enqueue_interval_ns_) {
+        frames_throttled_.fetch_add(1, std::memory_order_relaxed);
+        return;
+      }
+      if (now_ns > last_ns) {
+        last_enqueued_ns_.store(now_ns, std::memory_order_relaxed);
+      }
+    }
+
     if (frame_skip_) {
       // Drop frame if the detection queue is full (processing is lagging)
       FrameToken token{msg, seq_.fetch_add(1, std::memory_order_relaxed)};
@@ -307,6 +329,13 @@ private:
   {
     pin_thread_to_core(core_detect_);
 
+    // OpenCV is built against TBB, which by default spawns a worker pool
+    // sized to nproc. Those workers are NOT affinity-bound to core_detect_,
+    // so cvtColor/detectMarkers would otherwise fan out onto the cores
+    // reserved for the spin/publish threads. Force single-threaded OpenCV
+    // ops so all detection work actually stays on this pinned core.
+    cv::setNumThreads(1);
+
     // Scratch buffers – re-used across frames (no per-frame allocation)
     std::vector<int>                    ids;
     std::vector<std::vector<cv::Point2f>> corners, rejected;
@@ -324,10 +353,12 @@ private:
         continue;
       }
 
-      // Convert ROS image to OpenCV Mat without copying pixel data
+      // Convert ROS image to OpenCV Mat without copying pixel data.
+      // Camera already publishes mono8 when possible (see camera_capture_node) —
+      // pass encoding through as-is so we don't force an extra colour conversion.
       cv_bridge::CvImageConstPtr cv_img;
       try {
-        cv_img = cv_bridge::toCvShare(token.msg, "bgr8");
+        cv_img = cv_bridge::toCvShare(token.msg, token.msg->encoding);
       } catch (const cv_bridge::Exception& e) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
           "cv_bridge error: %s", e.what());
@@ -336,9 +367,16 @@ private:
       const cv::Mat& frame = cv_img->image;
       if (frame.empty()) continue;
 
-      // Grey-scale conversion (in-place, NEON-accelerated by OpenCV)
+      // Grey-scale conversion (in-place, NEON-accelerated by OpenCV).
+      // Skip it entirely when the frame is already single-channel — avoids
+      // a redundant full-frame conversion on top of the one gstreamer already
+      // did to produce the source colour space.
       cv::Mat grey;
-      cv::cvtColor(frame, grey, cv::COLOR_BGR2GRAY);
+      if (frame.channels() == 1) {
+        grey = frame;
+      } else {
+        cv::cvtColor(frame, grey, cv::COLOR_BGR2GRAY);
+      }
 
       // ArUco detection
       ids.clear(); corners.clear(); rejected.clear();
@@ -360,7 +398,7 @@ private:
           }
 
           cv::solvePnP(
-            build_object_points(marker_size_),
+            object_points_,
             corners[i],
             camera_matrix_, dist_coeffs_,
             rvecs[i], tvecs[i],
@@ -545,11 +583,12 @@ private:
     const uint64_t det = detect_count_.exchange(0,  std::memory_order_relaxed);
     const uint64_t pub = publish_count_.exchange(0, std::memory_order_relaxed);
     const uint64_t fdr = frames_dropped_.exchange(0, std::memory_order_relaxed);
+    const uint64_t fth = frames_throttled_.exchange(0, std::memory_order_relaxed);
     const uint64_t rdr = results_dropped_.exchange(0, std::memory_order_relaxed);
 
     RCLCPP_INFO(get_logger(),
-      "[FPS] in=%lu det=%lu pub=%lu | dropped frames=%lu results=%lu",
-      in, det, pub, fdr, rdr);
+      "[FPS] in=%lu det=%lu pub=%lu | dropped=%lu throttled=%lu results=%lu",
+      in, det, pub, fdr, fth, rdr);
   }
 
   // ── Member variables ──────────────────────────────────────────────────────
@@ -557,10 +596,12 @@ private:
   // Parameters
   std::string camera_topic_;
   float       marker_size_;
+  float       target_fps_{30.0f};
   bool        frame_skip_;
   int         core_capture_;
   int         core_detect_;
   int         core_publish_;
+  std::vector<cv::Point3f> object_points_;
 
   // Camera intrinsics
   cv::Mat camera_matrix_;
@@ -588,12 +629,15 @@ private:
   std::thread       publish_thread_;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> seq_{0};
+  std::atomic<uint64_t> last_enqueued_ns_{0};
+  uint64_t min_enqueue_interval_ns_{0};
 
   // Stats counters
   std::atomic<uint64_t> frame_count_in_{0};
   std::atomic<uint64_t> detect_count_{0};
   std::atomic<uint64_t> publish_count_{0};
   std::atomic<uint64_t> frames_dropped_{0};
+  std::atomic<uint64_t> frames_throttled_{0};
   std::atomic<uint64_t> results_dropped_{0};
 };
 

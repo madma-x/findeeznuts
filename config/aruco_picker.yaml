@@ -16,10 +16,17 @@
     aruco_dict: 0
 
     # ── Performance ────────────────────────────────────────────────────────────
-    target_fps: 30.0
 
     # Drop incoming frames when the detection queue is full (prevents build-up)
     frame_skip_on_lag: true
+
+    # Disabled: the camera now publishes at a steady 30fps, matching this
+    # target exactly, so the fixed-interval throttle below was clipping
+    # frames on ordinary timing jitter alone (dropped=0 on the queue proved
+    # the detect thread wasn't lagging). frame_skip_on_lag above already
+    # provides real, adaptive backpressure — this becomes useful again only
+    # if the camera is reconfigured to publish faster than needed.
+    target_fps: 0.0
 
     # CPU core assignments (Raspberry Pi 4 has cores 0-3)
     core_capture: 0   # ROS2 spin / image callback

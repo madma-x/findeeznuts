@@ -22,8 +22,13 @@ public:
       std::string(
         "libcamerasrc ! "
         "video/x-raw,width=640,height=480,framerate=30/1 ! "
-        "videoconvert ! video/x-raw,format=BGR ! "
+        "videoconvert ! video/x-raw,format=GRAY8 ! "
         "appsink drop=true max-buffers=1 sync=false"));
+    // ArUco detection only ever needs greyscale. gstreamer's videoconvert has to
+    // read the sensor's native colour space either way, so targeting GRAY8
+    // instead of BGR is free here and saves a second full-frame cvtColor
+    // (BGR->GRAY) downstream in aruco_picker_node. Empty = auto-select by backend.
+    declare_parameter("encoding", std::string(""));
 
     backend_ = get_parameter("backend").as_string();
     device_id_ = get_parameter("device_id").as_int();
@@ -33,6 +38,12 @@ public:
     height_ = get_parameter("height").as_int();
     fps_ = get_parameter("fps").as_double();
     gst_pipeline_ = get_parameter("gst_pipeline").as_string();
+    encoding_ = get_parameter("encoding").as_string();
+    if (encoding_.empty()) {
+      // v4l2 (cv::VideoCapture/CAP_V4L2) hands back BGR; gstreamer here is
+      // configured to hand back GRAY8 — pick the matching default encoding.
+      encoding_ = (backend_ == "gstreamer") ? "mono8" : "bgr8";
+    }
 
     rclcpp::QoS qos(rclcpp::KeepLast(1));
     qos.best_effort().durability_volatile();
@@ -107,7 +118,7 @@ private:
     cv_bridge::CvImage out;
     out.header.stamp = now();
     out.header.frame_id = frame_id_;
-    out.encoding = "bgr8";
+    out.encoding = encoding_;
     out.image = frame;
     publisher_->publish(*out.toImageMsg());
   }
@@ -121,6 +132,7 @@ private:
   std::string camera_topic_;
   std::string frame_id_;
   std::string gst_pipeline_;
+  std::string encoding_;
 
   cv::VideoCapture capture_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;

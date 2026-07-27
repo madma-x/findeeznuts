@@ -17,9 +17,7 @@ def generate_launch_description():
     return LaunchDescription([
         _include('i2c_node', 'i2c.launch.py'),
         _include('robot_actuators', 'sequencer.launch.py'),
-        _include('findeeznuts', 'aruco_with_camera.launch.py'),
         _include('feetech_node', 'feetech.launch.py'),
         _include('safety_node', 'safety.launch.py'),
-
 
     ])

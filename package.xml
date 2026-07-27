@@ -36,4 +36,8 @@
   <!-- OpenCV with ArUco support (opencv-contrib) -->
   <build_depend>libopencv-dev</build_depend>
 
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+
 </package>

@@ -52,7 +52,7 @@ def generate_launch_description():
         default_value=(
             "libcamerasrc ! "
             "video/x-raw,width=640,height=480,framerate=30/1 ! "
-            "videoconvert ! video/x-raw,format=BGR ! "
+            "videoconvert ! video/x-raw,format=GRAY8 ! "
             "appsink drop=true max-buffers=1 sync=false"
         ),
         description="GStreamer pipeline used when backend=gstreamer"
@@ -73,6 +73,9 @@ def generate_launch_description():
             "gst_pipeline": LaunchConfiguration("gst_pipeline"),
             "frame_id": "camera_optical_frame",
         }],
+        # Reserve core 3 for capture so it can't land on the cores
+        # aruco_picker_node pins its spin/detect/publish threads to (0-2).
+        prefix="taskset -c 3",
         emulate_tty=True,
     )
 
